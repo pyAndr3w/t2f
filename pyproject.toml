@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "t2f"
-version = "0.1.5"
+version = "0.1.6"
 description = "TVM Assembly to Fift Assembly Translator"
 authors = ["Andrew Gutarev <gutarev01@gmail.com>"]
 readme = "README.md"

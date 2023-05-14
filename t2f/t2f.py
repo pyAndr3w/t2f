@@ -69,8 +69,9 @@ class Procedure(object):
                 continue
             if '<{' in line:
                 cont_type = re.findall(r'([\w\d]+):<{', line)[0]
-                # if cont_type == "IFELSE":
-                #     result_list[-1].opcodes[-1].change_type("IF")
+                if cont_type == "IFELSE":
+                    cont_type = "ELSE"
+                    result_list[-1].opcodes[-1].change_type("IF")
                 
                 result_list.append(Continuation(cont_type))
             elif '}>' in line:
@@ -90,12 +91,12 @@ class Procedure(object):
                         ref_bits = cont_0.opcodes[0].params[0]
                         new_opcode = Opcode("PUSHREF", [f"<b {ref_bits} s, b>"])
                     cont_1.opcodes.append(new_opcode)
-                elif cont_0.type == "IFELSE":
-                    cont_0.change_type("IF")
-                    cont_else = cont_1.opcodes.pop()
-                    cont_else.change_type("ELSE")
-                    cont_1.opcodes.append(cont_0)
-                    cont_1.opcodes.append(cont_else)
+                # elif cont_0.type == "IFELSE":
+                #     cont_0.change_type("IF")
+                #     cont_else = cont_1.opcodes.pop()
+                #     cont_else.change_type("ELSE")
+                #     cont_1.opcodes.append(cont_0)
+                #     cont_1.opcodes.append(cont_else)
                 elif cont_0.type == "SECOND_":
                     cont_1.opcodes[-1].change_type("IF")
                     cont_0.change_type("ELSE")
