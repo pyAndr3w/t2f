@@ -304,7 +304,7 @@ def translate(args):
         prog_code = '"PatchedAsm.fif" include\n\n' + prog_code
 
     if args.tvc:
-        prog_code += f'\n\n<b b{{0011}} s, swap ref, <b b> ref, b>\n' \
+        prog_code += f'\n\n<b b{{00110}} s, swap ref, <b b> ref, b>\n' \
                      f'2 boc+>B "{os.path.splitext(args.output)[0]}.tvc" B>file\n'
 
     with open(args.output, 'w') as file:
