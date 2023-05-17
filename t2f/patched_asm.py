@@ -620,7 +620,7 @@ x{CF3F} @Defop BCHKBITREFSQ
 x{CF40} @Defop STZEROES
 x{CF41} @Defop STONES
 x{CF42} @Defop STSAME
-{ tuck sbitrefs swap 23 + swap @havebitrefs not
+{ tuck sbitrefs swap 22 + swap @havebitrefs not
   { swap PUSHSLICE STSLICER }
   { over sbitrefs 2dup 57 3 2x<=
     { rot x{CFC_} s, swap 2 u, over 6 + 3 >> tuck 3 u, 3 roll s,
