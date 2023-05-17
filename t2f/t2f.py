@@ -57,6 +57,8 @@ class Procedure(object):
     def __init__(self, code):
         code_lines = code.split('\n')
         self.name = code_lines[0]
+        if self.name.endswith("_macro"):
+            self.name = self.name[0:-6]
         self.body = Procedure.process_code(code_lines[1:])
     
     def process_code(code_lines):
@@ -101,6 +103,16 @@ class Procedure(object):
                     cont_1.opcodes[-1].change_type("IF")
                     cont_0.change_type("ELSE")
                     cont_1.opcodes.append(cont_0)
+                elif cont_0.type == "COMPUTE":
+                    func_name = cont_0.opcodes[0].params[0]
+                    new_opcode = Opcode("", [f"<{{\n{func_name} INLINECALL\n}}>s 0 runvmx drop"])
+                    prev_opcode = cont_1.opcodes.pop()
+                    if prev_opcode.opcode in ["PUSHREF", "PUSHSLICE", "PUSHSLICE"] and prev_opcode.params is None:
+                        cont_1.opcodes.append(new_opcode)
+                        cont_1.opcodes.append(prev_opcode)
+                    else:
+                        cont_1.opcodes.append(prev_opcode)
+                        cont_1.opcodes.append(new_opcode)
                 else:
                     cont_1.add_opcode(cont_0)
                 result_list.append(cont_1)
@@ -118,6 +130,13 @@ class Procedure(object):
                 elif opcode_name == "WHILE":
                      result_list[-1].opcodes[-1].change_type("DO")
                      result_list[-1].opcodes[-2].change_type("WHILE")
+                elif opcode_name == "INLINECALL":
+                    func_name = params[0]
+                    if func_name.endswith("_macro"):
+                        func_name = func_name[0:-6]
+                    cont_0 = result_list.pop()
+                    cont_0.add_opcode(Opcode(opcode_name, [func_name]))
+                    result_list.append(cont_0)
                 else:
                     cont_0 = result_list.pop()
                     cont_0.add_opcode(Opcode(opcode_name, params))
@@ -127,6 +146,22 @@ class Procedure(object):
         proc_code = re.sub(r'}>\s*ELSE:<{', r'}>ELSE<{', proc_code)
         proc_code = re.sub(r'}>\s*DO:<{', r'}>DO<{', proc_code)
         return proc_code
+    
+    def inline_all(self, procs):
+        new_lines = []
+        for line in self.body.split("\n"):
+            if "INLINECALL" in line:
+                proc_name = line.split(" ")[0]
+                proc = procs[proc_name]
+                new_lines.append(f"// begin {proc_name}")
+                for idx, l in enumerate(proc.body.split("\n")):
+                    if not len(re.findall(r'^\s*$', l)):
+                        new_lines.append(l)
+                
+                new_lines.append(f"// end {proc_name}")
+            else:
+                new_lines.append(line)
+        self.body = "\n".join(new_lines)
 
 
 class Program(object):   
@@ -152,18 +187,18 @@ class Program(object):
         external = "recv_external" in self.procs.keys()
         ticktock = "run_ticktock" in self.procs.keys()
         if internal and not external and not ticktock:
-            r += "IFNOT: recv_internal INLINECALL\n\n"
+            r += "DUP IFNOT: recv_internal INLINECALL\n\n"
         else:
             if ticktock:
                 r += "DUP -2 EQINT IFJMP:<{\n" \
-                        "DROP run_ticktock INLINECALL\n" \
+                        "run_ticktock INLINECALL\n" \
                     "}>\n\n"
             if internal:
-                r += "DUP 0 EQINT IFJMP:<{\n" \
-                        "DROP recv_internal INLINECALL\n" \
+                r += "DUP IFNOTJMP:<{\n" \
+                        "recv_internal INLINECALL\n" \
                     "}>\n\n"
             if external:
-                r += "-1 EQINT IFJMP:<{\n" \
+                r += "DUP -1 EQINT IFJMP:<{\n" \
                         "recv_external INLINECALL\n" \
                     "}>\n\n"
                   
@@ -231,12 +266,12 @@ def translate(args):
     code = code.replace(".internal-alias :main_internal, 0\n.internal :main_internal", "recv_internal")
     code = code.replace(".internal-alias :main_external, -1\n.internal :main_external", "recv_external")
     code = code.replace(".internal-alias :onTickTock, -2\n.internal :onTickTock", "run_ticktock")
-    code = re.sub(r'.macro (\w+)', r'\1', code)
+    code = re.sub(r'\.macro (\w+)(?=_macro)?', r'\1', code)
 
     if len(re.findall(r'onCodeUpgrade', code)):
         print("ERROR: onCodeUpgrade currently is not supported")
         exit(1)
-        
+
     code = code.replace("\s$", "")
     code = code.replace("^\s", "")
     code = code.replace(" {", ":<{")
@@ -244,8 +279,9 @@ def translate(args):
     code = code.replace(".", "")
     code = code.replace("}", "}>")
     code = code.replace("PUSHCONT:<{", "CONT:<{")
-    
+
     code = code.replace("IFREF", "IF")
+    code = code.replace("IFNOTREF", "IFNOT")
     code = code.replace("ELSEREF", "ELSE")
     code = code.replace("IFJMPREF", "IFJMP")
     code = code.replace("IFNOTJMPREF", "IFNOTJMP")
@@ -263,7 +299,9 @@ def translate(args):
 
     code = re.sub(r';.+', r'', code)
 
-    code = re.sub(r'( *)(\w+ )([\w \-{}()]+)*', r'\1\3 \2', code)
+    code = re.sub(r'( *)(\w+ )([\w \-{}()$]+)*', r'\1\3 \2', code)
+
+    code = re.sub(r'\$([\w\d_]+)\$ compute', r'COMPUTE:<{\n\1 INLINECALL\n}>', code)
 
     code = re.sub(r'(\d+ MODPOW2)', r'\1#', code)
     code = re.sub(r'(\d+ RSHIFT)', r'\1#', code)
@@ -277,9 +315,23 @@ def translate(args):
     code = code.replace("\n{", "\nSECOND_:<{")
 
     # BUILD
-    procs = {proc.name:proc for proc in [Procedure(proc_code) for proc_code in code.split("\n\n")]}
+    procs = sort_procs({proc.name:proc for proc in [Procedure(proc_code) for proc_code in code.split("\n\n")]})
 
-    prog = Program(sort_procs(procs))
+    if args.inline:
+        for proc_name in procs:
+            procs[proc_name].inline_all(procs)
+            
+        funcs = []
+        if "recv_internal" in procs:
+            funcs.append("recv_internal")
+        if "recv_external" in procs:
+            funcs.append("recv_external")
+        if "run_ticktock" in procs:
+            funcs.append("run_ticktock")
+
+        procs = {proc_name:procs[proc_name] for proc_name in funcs}
+
+    prog = Program(procs)
     prog_code = prog.return_cell()
 
 
@@ -304,7 +356,12 @@ def translate(args):
         prog_code = '"PatchedAsm.fif" include\n\n' + prog_code
 
     if args.tvc:
-        prog_code += f'\n\n<b b{{00110}} s, swap ref, <b b> ref, b>\n' \
+        prog_code += f'\n\n' \
+                     f'<b\n' \
+                     f'    b{{00110}} s,\n' \
+                     f'    swap ref,\n' \
+                     f'    <b x{{0000000000000000000000000000000000000000000000000000000000000000}} 0 dictnew 64 udict! drop dict, b> ref,\n' \
+                     f'b>\n\n' \
                      f'2 boc+>B "{os.path.splitext(args.output)[0]}.tvc" B>file\n'
 
     with open(args.output, 'w') as file:
@@ -323,6 +380,7 @@ def main():
     parser.add_argument('-o', '--output', dest='output', default=None, help='output file name')
     parser.add_argument('-t', '--tvc', dest='tvc', default=False, help='add tvc generation', action='store_true')
     parser.add_argument('-a', '--asm-include', dest='asm', default=False, help='add PatchedAsm.fif', action='store_true')
+    parser.add_argument('-i', '--inline-all', dest='inline', default=False, help='raw inline all functions', action='store_true')
     parser.add_argument('--debug', dest='debug', default=False, action='store_true')
 
     args = parser.parse_args()
